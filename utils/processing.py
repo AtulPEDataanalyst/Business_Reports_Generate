@@ -8,20 +8,226 @@ import numpy as np
 from datetime import datetime
 from utils.validation import check_column
 
+
+# ─── Per-transaction audit logger ─────────────────────────────────────────────
+def _log_change(logs: list, row_id, field: str, old_val, new_val, reason: str = ""):
+    """Append a colour-coded per-row field-change entry."""
+    reason_str = f" ← {reason}" if reason else ""
+    logs.append(
+        f'<span class="log-change">'
+        f'[CHANGE] Row {row_id} | {field}: "{old_val}" → "{new_val}"{reason_str}'
+        f'</span>'
+    )
+
+
+def _log_row_ok(logs: list, row_id, ref=None):
+    ref_str = f" | Ref: {ref}" if ref else ""
+    logs.append(
+        f'<span class="log-ok">[OK] Row {row_id}{ref_str} — processed</span>'
+    )
+
+
+def _log_skip(logs: list, row_id, reason: str):
+    logs.append(
+        f'<span class="log-skip">[SKIP] Row {row_id} — {reason}</span>'
+    )
+
+
+
 # ─── CRM → Business Source mapping (configurable) ────────────────────────────
 CRM_MAPPING: dict[str, str] = {
-    "Direct": "Direct",
-    "Soman Soni": "Direct",
-    "Sachin Dubey": "Affiliate",
-    "Milind Chilhate": "IMA",
+
+    # ─── Direct ─────────────────────────
+    "Ankush Jamunde": "Direct",
+    "Tejas Loke": "Direct",
     "Ravi Raj Rathore": "Direct",
+    "Soman Soni": "Direct",
+    "Shraddha Pawar": "Direct",
+    "Gautam Rajendra Soni": "Direct",
+    "Krutika Chalke": "Direct",
+    "Manisha Singh": "Direct",
+    "Mohammad Shaikh": "Direct",
+    "Sachin Dubey": "Direct",
+    "Pradeep Yadav": "Direct",
+    "Aakash Hirekhan": "Direct",
+    "Priti Gajare": "Direct",
+    "Puja Ganesh Kamble": "Direct",
+    "Milind Chilhate": "Direct",
+    "Vivek Dave": "Direct",
+    "Gyanendra Tiwari": "Direct",
+    "Girish Konkar": "Direct",
+    "Sanidev Vishwakarma": "Direct",
+    "Mehtab Khan": "Direct",
+    "Satish Durgoli": "Direct",
+    "Direct": "Direct",
+    "Tejas Loke, Shraddha Pawar": "Direct",
+
+    # ─── Affiliate ──────────────────────
+    "Sachin Dubey": "Affiliate",
+    "Krutika Chalke": "Affiliate",
+    "Pradnya Shikhre": "Affiliate",
+    "Sonam Mulay": "Affiliate",
+    "Siddhesh Gore": "Affiliate",
+    "Sundar Naik": "Affiliate",
+    "Rasika Parab": "Affiliate",
+    "Pradeep Yadav": "Affiliate",
+    "Sarjerao Gorad": "Affiliate",
+    "Amit Kumar Pandey": "Affiliate",
+    "Vishal Pandya": "Affiliate",
+    "Mehtab Khan": "Affiliate",
+    "Avinash Maurya": "Affiliate",
+    "Aakash Hirekhan": "Affiliate",
+    "Ajay Jaiswal": "Affiliate",
+    "Manisha Singh": "Affiliate",
+    "Pramila Jadhav": "Affiliate",
+    "Pratishtha Anil  Singh": "Affiliate",
+    "Milind Chilhate": "Affiliate",
+    "Priti Gajare": "Affiliate",
+    "Puja Ganesh Kamble": "Affiliate",
+    "Ravi Raj Rathore": "Affiliate",
+    "Gyanendra Tiwari": "Affiliate",
+    "Mamta Gupta": "Affiliate",
+    "Suresh Murtadak": "Affiliate",
+    "Santosh Mirashi": "Affiliate",
+    "Vikrant Gharat": "Affiliate",
+    "Priya Choube": "Affiliate",
+    "Prawesh Rathod": "Affiliate",
+    "Ranapratap Yadav": "Affiliate",
+    "Sheetal Kadam": "Affiliate",
+    "VIJAY SANMUKH KAMBE": "Affiliate",
+
+    # ─── IMA ────────────────────────────
+    "Milind Chilhate": "IMA",
     "Vinita Mohan Rane": "IMA",
     "Suvarna Gawai": "IMA",
-    # Add more CRM → Source mappings here as needed
+    "Vaishali Bhivsane": "IMA",
+    "Snehal Owhal": "IMA",
+    "Yogesh Tribhuvan": "IMA",
+    "Rasika Parab": "IMA",
+    "Teesha Sonawane": "IMA",
+    "Manisha Singh": "IMA",
+    "Lakshmi Kagada": "IMA",
+    "Sejal Rai": "IMA",
+    "Savitri Pandey": "IMA",
+    "Harsh Mahale": "IMA",
+    "Prisha Jadhav": "IMA",
+    "Tejas Loke": "IMA",
+    "Antara Kadam": "IMA",
+    "Supriya Mishra": "IMA",
+    "Yogita Tiwari": "IMA",
+    "Mehtab Khan": "IMA",
+    "Ranveer Singh": "IMA",
+    "Manasi Gite": "IMA",
+    "Divya Naik": "IMA",
+    "Anita Sonone": "IMA",
+    "Vishal Shelke": "IMA",
+    "Rajendra Bhosale": "IMA",
+    "Girish Konkar": "IMA",
+    "Nandini Devendra": "IMA",
+    "Jyoti Jaiswal": "IMA",
+    "Aman Yadav": "IMA",
+    "Mohammad Shaikh": "IMA",
+    "Sayali Gangar": "IMA",
+    "Neha Prajapati": "IMA",
+    "Pratik Jaywant kashte": "IMA",
+    "Muskan Mishra": "IMA",
+    "Riya Yadav": "IMA",
+    "Sanika Kanekar": "IMA",
+    "Sahil Karambele": "IMA",
+    "SHREYA DILIP BARE": "IMA",
+    "SADIYA RAFIQUE SHAIKH": "IMA",
+    "VISHAKHA BHOSLE": "IMA",
+    "Shraddha Pawar": "IMA",
+    "Anil Yadav": "IMA",
+    "Harsh Raul": "IMA",
+    "Alok Gauda": "IMA",
+    "Pintu Gauda": "IMA",
+    "Babaji Naiksatam": "IMA",
+    "Yash More": "IMA",
+    "Ritali Samindre": "IMA",
+    "Radha Choudhary": "IMA",
+    "Shivangi Kaushik": "IMA",
+    "Sonika Singh": "IMA",
+    "Ankita Sutar": "IMA",
+    "Jayesh Jain": "IMA",
+    "Vivek Chiplunkar": "IMA",
+    "Vivek Dave": "IMA",
+    "Direct": "IMA",
+
+    # ─── IMA Cross Sales ─────────────────
+    "Ravi Raj Rathore": "IMA Cross Sales",
+    "Milind Chilhate": "IMA Cross Sales",
+    "Manisha Singh": "IMA Cross Sales",
+    "Prisha Jadhav": "IMA Cross Sales",
+    "Antara Kadam": "IMA Cross Sales",
+    "Rasika Parab": "IMA Cross Sales",
+    "Snehal Owhal": "IMA Cross Sales",
+    "Mehtab Khan": "IMA Cross Sales",
+    "Yogesh Tribhuvan": "IMA Cross Sales",
+    "Siddhesh Gore": "IMA Cross Sales",
+    "Vaishali Bhivsane": "IMA Cross Sales",
+    "Ranveer Singh": "IMA Cross Sales",
+    "Priti Gajare": "IMA Cross Sales",
+    "Girish Konkar": "IMA Cross Sales",
+    "Sanidev Vishwakarma": "IMA Cross Sales",
+    "Manasi Gite": "IMA Cross Sales",
+    "Vivek Dave": "IMA Cross Sales",
+    "Krutika Chalke": "IMA Cross Sales",
+    "Rahul Singh": "IMA Cross Sales",
+    "Divya Naik": "IMA Cross Sales",
+    "Sachin Dubey": "IMA Cross Sales",
+    "Anita Sonone": "IMA Cross Sales",
+    "Satish Durgoli": "IMA Cross Sales",
+    "Suvarna Gawai": "IMA Cross Sales",
+    "Prasad Gargade": "IMA Cross Sales",
+    "Tejas Loke": "IMA Cross Sales",
+    "Yogita Tiwari": "IMA Cross Sales",
+    "Pradnya Shikhre": "IMA Cross Sales",
+    "Suryakant Kamble": "IMA Cross Sales",
+    "Vikrant Sawant": "IMA Cross Sales",
+    "PURVESH ASHOK KHARAT": "IMA Cross Sales",
+    "DINBAHADUR PAAN SINGH": "IMA Cross Sales",
+    "Ankush Jamunde": "IMA Cross Sales",
+    "Muskan Mishra": "IMA Cross Sales",
+    "Shraddha Pawar": "IMA Cross Sales",
+    "Riya Yadav": "IMA Cross Sales",
+    "Vinita Mohan Rane": "IMA Cross Sales",
+    "Babaji Naiksatam": "IMA Cross Sales",
+    "Radha Choudhary": "IMA Cross Sales",
+    "Sonam Mulay": "IMA Cross Sales",
+    "MAHESH GOLE": "IMA Cross Sales",
+    "Jyoti Jaiswal": "IMA Cross Sales",
+
+    # ─── Corporate ──────────────────────
+    "Kedar Gorathe": "Corporate",
+    "Pratishtha Anil  Singh": "Corporate",
+
+    # ─── PBHD ───────────────────────────
+    "Puja Ganesh Kamble": "PBHD",
+    "Soman Soni": "PBHD",
+
+
+    # ─── Multi CRM Names ────────────────
+    "Milind Chilhate, Milind Chilhate": "IMA",
+    "Pradnya Shikhre, Antara Kadam": "IMA Cross Sales",
+    "Pradnya Shikhre, Sejal Rai": "IMA Cross Sales",
+    "Sejal Rai, Mehtab Khan": "IMA Cross Sales",
+    "Ravi Raj Rathore, Anita Sonone": "IMA Cross Sales",
+    "Antara Kadam, Mehtab Khan": "IMA Cross Sales",
+    "Yogita Tiwari, Ranveer Singh": "IMA Cross Sales",
+    "Yogesh Tribhuvan, Mehtab Khan": "IMA Cross Sales",
+    "Yogita Tiwari, Mehtab Khan": "IMA Cross Sales",
+    "Manisha Singh, Vivek Dave": "IMA Cross Sales",
+    "Mehtab Khan, Manasi Gite": "IMA Cross Sales",
+    "Mehtab Khan, Anita Sonone": "IMA Cross Sales",
+    "Milind Chilhate, Krutika Chalke": "IMA Cross Sales",
+    "Sanika Kanekar, Sanika Kanekar, Sanika Kanekar": "IMA",
+    "Divya Naik, Divya Naik": "IMA",
+    "Suvarna Gawai, Suvarna Gawai": "IMA",
 }
 
 HEALTH_LIFE_CLASSES = ["Health", "Life", "Health (Non Life)"]
-PRIVATE_CAR_POLICIES = ["Private Car Comp", "Private Car SAOD",
+PRIVATE_CAR_POLICIES = ["Private Car Comp", "Private Car SAOD","Private Car - Comp New Vehicle",
                         "Private Car - Comp", "Private Car - SAOD"]
 PI_POLICIES = [
     "PROFESSIONAL INDEMNITY HOSPITAL",
@@ -66,11 +272,12 @@ def process_login_business(df: pd.DataFrame, logs: list) -> pd.DataFrame:
         df = df[mask].copy()
         logs.append(f"  Step 2: Filtered to current month ({now.strftime('%B %Y')}): {before} → {len(df)} rows.")
 
-    # STEP 3 — Delete rows where BookedIn == "Direct Code"
+    # STEP 3 — Exclude only "Direct Code". Blank BookedIn rows are KEPT.
     if check_column(df, "BookedIn"):
         before = len(df)
-        df = df[df["BookedIn"].astype(str).str.strip() != "Direct Code"].copy()
-        logs.append(f"  Step 3: Deleted {before - len(df)} 'Direct Code' rows.")
+        booked_str = df["BookedIn"].fillna("").astype(str).str.strip()
+        df = df[booked_str != "Direct Code"].copy()
+        logs.append(f"  Step 3: Excluded {before - len(df)} 'Direct Code' rows. Blank BookedIn rows kept.")
 
     df = _shared_steps(df, logs, mode="login")
     logs.append(f"✅ Login Business processing complete: {len(df)} rows output.")
@@ -99,17 +306,14 @@ def process_issued_business(df: pd.DataFrame, logs: list) -> pd.DataFrame:
         df = df[mask].copy()
         logs.append(f"  Step 2: Filtered to current month ({now.strftime('%B %Y')}): {before} → {len(df)} rows.")
 
-    # STEP 3 — Same: delete Direct Code
+    # STEP 3 — Exclude only "Direct Code". Blank BookedIn rows are KEPT.
     if check_column(df, "BookedIn"):
         before = len(df)
-        df = df[df["BookedIn"].astype(str).str.strip() != "Direct Code"].copy()
-        logs.append(f"  Step 3: Deleted {before - len(df)} 'Direct Code' rows.")
+        booked_str = df["BookedIn"].fillna("").astype(str).str.strip()
+        df = df[booked_str != "Direct Code"].copy()
+        logs.append(f"  Step 3: Excluded {before - len(df)} 'Direct Code' rows. Blank BookedIn rows kept.")
 
-    # DIFF 2 — Delete rows where Policy Status == "Policy Awaited" (before shared steps)
-    if check_column(df, "Policy Status"):
-        before = len(df)
-        df = df[df["Policy Status"].astype(str).str.strip() != "Policy Awaited"].copy()
-        logs.append(f"  Step 3b (Issued): Deleted {before - len(df)} 'Policy Awaited' rows.")
+    # Policy Awaited + Cancelled removal for Issued mode is handled in Step 14 (_shared_steps)
 
     df = _shared_steps(df, logs, mode="issued")
     logs.append(f"✅ Issued Business processing complete: {len(df)} rows output.")
@@ -212,48 +416,109 @@ def _shared_steps(df: pd.DataFrame, logs: list, mode: str) -> pd.DataFrame:
         logs.append(f"  Step 13: Changed {mask.sum()} rows to 'Renew' (Parent PL# set + Type = Policy).")
 
     # STEP 14 — Policy Status handling
+    # LOGIN : Keep ALL rows. Policy Awaited → "Not Issued". Cancelled → "Cancelled". Others → "Issued".
+    # ISSUED: DELETE Policy Awaited rows (not yet issued = irrelevant for issued report).
+    #         Keep Cancelled. Keep Issued. No other deletions.
     status_col = "Policy Status"
     if status_col in df.columns:
-        if mode == "login":
-            # Exclude Policy Awaited and Cancelled
-            before = len(df)
-            df = df[~df[status_col].astype(str).str.strip().isin(["Policy Awaited", "Cancelled"])].copy()
-            logs.append(f"  Step 14: Removed {before - len(df)} 'Policy Awaited'/'Cancelled' rows.")
-            # Set remaining to "Issued"
-            df[status_col] = "Issued"
-            logs.append(f"  Step 14: Set all remaining Policy Status = 'Issued'.")
-        else:
-            # Issued mode: only exclude Cancelled (Policy Awaited already removed)
-            before = len(df)
-            df = df[df[status_col].astype(str).str.strip() != "Cancelled"].copy()
-            logs.append(f"  Step 14 (Issued): Removed {before - len(df)} 'Cancelled' rows.")
-            not_awaited = df[status_col].astype(str).str.strip() != "Not Issued"
-            df.loc[not_awaited, status_col] = "Issued"
+        status_str = df[status_col].fillna("").astype(str).str.strip()
 
-        # Replace Policy Awaited with Not Issued (in case any remain)
-        df[status_col] = df[status_col].astype(str).str.replace("Policy Awaited", "Not Issued", regex=False)
+        if mode == "login":
+            # LOGIN — no deletions, just relabel
+            awaited_mask   = status_str == "Policy Awaited"
+            cancelled_mask = status_str == "Cancelled"
+            other_mask     = ~awaited_mask & ~cancelled_mask
+            df.loc[awaited_mask,   status_col] = "Not Issued"
+            df.loc[cancelled_mask, status_col] = "Cancelled"
+            df.loc[other_mask,     status_col] = "Issued"
+            logs.append(f"  Step 14 (Login): {other_mask.sum()} → 'Issued', "
+                        f"{awaited_mask.sum()} → 'Not Issued', "
+                        f"{cancelled_mask.sum()} → 'Cancelled'. No rows deleted.")
+        else:
+            # ISSUED — remove Policy Awaited rows (these are not issued yet)
+            before = len(df)
+            df = df[status_str != "Policy Awaited"].copy()
+            removed = before - len(df)
+            # Re-evaluate after deletion
+            status_str2 = df[status_col].fillna("").astype(str).str.strip()
+            cancelled_mask2 = status_str2 == "Cancelled"
+            other_mask2     = ~cancelled_mask2
+            df.loc[cancelled_mask2, status_col] = "Cancelled"
+            df.loc[other_mask2,     status_col] = "Issued"
+            logs.append(f"  Step 14 (Issued): Removed {removed} 'Policy Awaited' rows. "
+                        f"{other_mask2.sum()} → 'Issued', "
+                        f"{cancelled_mask2.sum()} → 'Cancelled'.")
 
     # STEP 15 — Brokerage logic
+    # Only calculate when Total Brokerage Receivable is 0 or blank.
+    # If already has a value → leave untouched.
+    # For rows that need calculation:
+    #   45% when Insurer = Generali AND Policy Name = PI Hospital or PI Doctors
+    #   15% for all other rows
     brok_col = "Total Brokerage Receivable"
-    if "Insurer Name" in df.columns and "TPOD" in df.columns:
-        generali_mask = df["Insurer Name"].astype(str).str.strip() == GENERALI
-        df.loc[generali_mask, brok_col] = (df.loc[generali_mask, "TPOD"] * 0.45).round(2)
-        df.loc[~generali_mask, brok_col] = (df.loc[~generali_mask, "TPOD"] * 0.15).round(2)
-        logs.append(f"  Step 15: Brokerage set (45% Generali: {generali_mask.sum()} rows, 15% others: {(~generali_mask).sum()} rows).")
+    if brok_col not in df.columns:
+        df[brok_col] = 0.0
+    df[brok_col] = pd.to_numeric(df[brok_col], errors="coerce").fillna(0.0)
 
-    # STEP 16 — Type == Endorsement → Type of Business = Endorsement
+    if "TPOD" in df.columns:
+        # Only rows where brokerage is currently 0 or blank need calculation
+        needs_calc = _is_blank_or_zero(df[brok_col])
+        count_needs = needs_calc.sum()
+
+        if count_needs > 0:
+            # Default: 15% for all rows needing calculation
+            df.loc[needs_calc, brok_col] = (_safe_numeric(df, "TPOD")[needs_calc] * 0.15).round(2)
+            count_45 = 0
+
+            # Override: 45% only for Generali + PI Hospital/Doctors combination
+            if "Insurer Name" in df.columns and "Policy Name" in df.columns:
+                generali_mask = df["Insurer Name"].fillna("").astype(str).str.strip() == GENERALI
+                pi_mask = df["Policy Name"].fillna("").astype(str).str.upper().str.strip().isin(
+                    [p.upper() for p in PI_POLICIES])
+                special_mask = needs_calc & generali_mask & pi_mask
+                count_45 = special_mask.sum()
+                df.loc[special_mask, brok_col] = (_safe_numeric(df, "TPOD")[special_mask] * 0.45).round(2)
+
+            logs.append(f"  Step 15: Brokerage calculated for {count_needs} rows "
+                        f"(was 0/blank). 45% → {count_45} Generali+PI rows; "
+                        f"15% → {count_needs - count_45} other rows.")
+        else:
+            logs.append(f"  Step 15: All rows already have brokerage values — no recalculation needed.")
+
+    # STEP 16 & 17 — Create helper column 'Transaction Type' from original Type column
+    # This preserves the original Type values and maps them to business categories.
+    # Endorsement  : Type == "Endorsement" (exact)
+    # Installment  : Type contains "Installment" (covers Installment 1, 2, 3 etc.)
+    # All others   : copy Type of business as-is
     if "Type" in df.columns and tob_col in df.columns:
-        endo_mask = df["Type"].astype(str).str.strip().str.lower() == "endorsement"
+        type_str = df["Type"].fillna("").astype(str).str.strip()
+
+        # Create helper column starting from current Type of business values
+        df["Transaction Type"] = df[tob_col].fillna("").astype(str).str.strip()
+
+        # Endorsement: exact match on Type column
+        endo_mask = type_str.str.lower() == "endorsement"
+        df.loc[endo_mask, "Transaction Type"] = "Endorsement"
         df.loc[endo_mask, tob_col] = "Endorsement"
-        logs.append(f"  Step 16: Set {endo_mask.sum()} Endorsement rows.")
+        logs.append(f"  Step 16: Set {endo_mask.sum()} Endorsement rows in Type of business & Transaction Type.")
 
-    # STEP 17 — Type contains Installment → Type of Business = Installment; fix zero brokerage
-    if "Type" in df.columns and tob_col in df.columns:
-        inst_mask = df["Type"].astype(str).str.strip().str.lower().str.contains("installment", na=False)
+        # Installment: Type contains "Installment" (case-insensitive) — covers 1, 2, 3 etc.
+        inst_mask = type_str.str.lower().str.contains("installment", na=False)
+        df.loc[inst_mask, "Transaction Type"] = "Installment"
         df.loc[inst_mask, tob_col] = "Installment"
-        if brok_col in df.columns:
+        logs.append(f"  Step 17: Set {inst_mask.sum()} Installment rows in Type of business & Transaction Type.")
+
+        # Fix zero/blank brokerage for Installment rows (minimum 1%)
+        if brok_col in df.columns and "TPOD" in df.columns:
             zero_brok = inst_mask & _is_blank_or_zero(df[brok_col])
             df.loc[zero_brok, brok_col] = (df.loc[zero_brok, "TPOD"] * 0.01).round(2)
-            logs.append(f"  Step 17: Set {inst_mask.sum()} Installment rows; fixed {zero_brok.sum()} zero brokerage rows.")
+            if zero_brok.sum() > 0:
+                logs.append(f"  Step 17b: Fixed {zero_brok.sum()} zero-brokerage Installment rows at 1%.")
+
+        logs.append(f"  Transaction Type column created with values: "
+                    f"{df['Transaction Type'].value_counts().to_dict()}")
+    elif tob_col in df.columns:
+        # Fallback: if no Type column, Transaction Type = Type of business
+        df["Transaction Type"] = df[tob_col].fillna("").astype(str).str.strip()
 
     return df

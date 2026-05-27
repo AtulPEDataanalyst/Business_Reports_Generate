@@ -17,14 +17,15 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 HEADER_FILL_RAW    = PatternFill("solid", fgColor="1F4E79")   # dark blue
 HEADER_FILL_FRESH  = PatternFill("solid", fgColor="375623")   # dark green
 HEADER_FILL_RENEW  = PatternFill("solid", fgColor="7B2C2C")   # dark red
-TOTAL_ROW_FILL     = PatternFill("solid", fgColor="D9E1F2")   # light blue
+TOTAL_ROW_FILL     = PatternFill("solid", fgColor="D9E1F2")   # light blue — grand total
+SUBTOTAL_ROW_FILL  = PatternFill("solid", fgColor="E2EFDA")   # light green — subtotal
 ALT_ROW_FILL       = PatternFill("solid", fgColor="F2F2F2")   # light grey
 
 HEADER_FONT        = Font(bold=True, color="FFFFFF", size=11)
 TOTAL_FONT         = Font(bold=True, size=10)
 NORMAL_FONT        = Font(size=10)
 
-CURRENCY_FORMAT    = '₹#,##0.00'
+CURRENCY_FORMAT    = r'[<=9999999]₹##\,##\,##0.00;₹##\,##\,##\,##0.00'
 THIN_BORDER_SIDE   = Side(border_style="thin", color="BFBFBF")
 THIN_BORDER        = Border(
     left=THIN_BORDER_SIDE, right=THIN_BORDER_SIDE,
@@ -88,29 +89,40 @@ def _write_df_to_sheet(
                 cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
                 cell.border = THIN_BORDER
         else:
-            # Data row — detect if it's a "Grand Total" row
-            is_total = any(
-                str(cell.value).strip() in ("Grand Total", "All") 
-                for cell in ws[current_row] 
-                if cell.value is not None
+            # Data row — detect row type from flag columns or cell values
+            row_data = list(ws[current_row])
+            is_grandtotal = any(
+                str(cell.value).strip() in ("Grand Total",)
+                for cell in row_data if cell.value is not None
+            )
+            is_subtotal = any(
+                str(cell.value).strip() == "Subtotal"
+                for cell in row_data if cell.value is not None
             )
 
             for c_idx, cell in enumerate(ws[current_row], start=1):
                 col_name = display_df.columns[c_idx - 1] if c_idx <= len(display_df.columns) else ""
+                # Skip internal flag columns in formatting
+                if col_name in ("_is_subtotal", "_is_grandtotal", "_Report"):
+                    cell.font = NORMAL_FONT
+                    continue
                 cell.border = THIN_BORDER
                 cell.alignment = Alignment(vertical="center")
 
-                if is_total:
+                if is_grandtotal:
                     cell.font = TOTAL_FONT
                     cell.fill = TOTAL_ROW_FILL
+                elif is_subtotal:
+                    cell.font = Font(bold=True, size=10)
+                    cell.fill = SUBTOTAL_ROW_FILL
                 elif alternating and r_idx % 2 == 0:
                     cell.fill = ALT_ROW_FILL
                     cell.font = NORMAL_FONT
                 else:
                     cell.font = NORMAL_FONT
 
-                # Apply number formats
-                if col_name in CURRENCY_COLUMNS:
+                # Apply Indian currency format to money columns
+                if col_name in CURRENCY_COLUMNS or col_name.startswith("Premium |") or col_name.startswith("Brokerage |"):
                     cell.number_format = CURRENCY_FORMAT
                 elif col_name in NUMBER_COLUMNS:
                     cell.number_format = '#,##0'
@@ -152,13 +164,13 @@ def build_excel_output(
     ws_fresh = wb.create_sheet(title=fresh_title[:31])  # sheet name max 31 chars
     _write_pivot_header(ws_fresh, fresh_title)
     # Drop internal _Report column if present
-    disp_fresh = fresh_df.drop(columns=["_Report"], errors="ignore")
+    disp_fresh = fresh_df.drop(columns=["_Report", "_is_subtotal", "_is_grandtotal"], errors="ignore")
     _write_df_to_sheet(ws_fresh, disp_fresh, HEADER_FILL_FRESH, freeze=True, alternating=True)
 
     # ── Sheet 3: Renewal Report ────────────────────────────────────────────────
     ws_renew = wb.create_sheet(title=renewal_title[:31])
     _write_pivot_header(ws_renew, renewal_title)
-    disp_renew = renewal_df.drop(columns=["_Report"], errors="ignore")
+    disp_renew = renewal_df.drop(columns=["_Report", "_is_subtotal", "_is_grandtotal"], errors="ignore")
     _write_df_to_sheet(ws_renew, disp_renew, HEADER_FILL_RENEW, freeze=True, alternating=True)
 
     # Serialise to bytes

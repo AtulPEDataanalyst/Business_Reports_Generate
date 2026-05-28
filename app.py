@@ -95,7 +95,7 @@ with st.sidebar:
 
     uploaded_file = st.file_uploader(
         "📂 Upload Business Report",
-        type=["xlsx", "xls"],
+        type=["xlsx", "xls","csv"],
         help="Upload the SIBRO Excel business report file.",
     )
 
@@ -138,8 +138,11 @@ if uploaded_file is None:
 else:
     # ── Read uploaded file ────────────────────────────────────────────────────
     try:
-        engine = "xlrd" if uploaded_file.name.endswith(".xls") else "openpyxl"
-        df_raw = pd.read_excel(uploaded_file, engine=engine)
+        if uploaded_file.name.endswith(".csv"):
+            df_raw = pd.read_csv(uploaded_file)
+        else:    
+            engine = "xlrd" if uploaded_file.name.endswith(".xls") else "openpyxl"
+            df_raw = pd.read_excel(uploaded_file, engine=engine)
     except Exception as e:
         st.error(f"❌ Failed to read the uploaded file: {e}")
         st.stop()

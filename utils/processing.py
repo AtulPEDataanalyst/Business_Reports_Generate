@@ -563,6 +563,7 @@ def _shared_steps(df: pd.DataFrame, logs: list, mode: str) -> pd.DataFrame:
                 _log_change(logs, idx, brok_col, 0, new_brok,
                             f"Step 15: 15% of TPOD ({tpod_val})")
 
+            df[brok_col] = pd.to_numeric(df[brok_col], errors="coerce").astype(float)
             df.loc[inst_calc_mask,    brok_col] = (_safe_numeric(df, "TPOD")[inst_calc_mask]    * 0.01).round(2)
             df.loc[special_calc_mask, brok_col] = (_safe_numeric(df, "TPOD")[special_calc_mask] * 0.45).round(2)
             df.loc[normal_calc_mask,  brok_col] = (_safe_numeric(df, "TPOD")[normal_calc_mask]  * 0.15).round(2)

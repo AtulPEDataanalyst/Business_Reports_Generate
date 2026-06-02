@@ -389,6 +389,7 @@ def _shared_steps(df: pd.DataFrame, logs: list, mode: str) -> pd.DataFrame:
             new_net = round(df.at[idx, gross_col] / 1.18, 2)
             _log_change(logs, idx, net_col, old_net, new_net,
                         "Step 7: Net Premium = Gross Premium / 1.18")
+        df[net_col] = pd.to_numeric(df[net_col], errors="coerce").astype(float)
         df.loc[need_calc, net_col] = (df.loc[need_calc, gross_col] / 1.18).round(2)
         logs.append(f'<span class="log-info">  Step 7: Recalculated Net Premium for {need_calc.sum()} rows.</span>')
 

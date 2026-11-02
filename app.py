@@ -17,7 +17,7 @@ import pandas as pd
 import streamlit as st
 
 from utils.validation import validate_upload
-from utils.processing import process_login_business, process_issued_business
+from utils.processing import process_login_business, process_issued_business, build_period
 from utils.pivot import generate_pivots
 from utils.formatting import build_excel_output
 
@@ -104,6 +104,35 @@ with st.sidebar:
         ["Login Business", "Issued Business"],
         help="Select the type of business processing to apply.",
     )
+
+    # ── Period selection (Month / Financial Year Apr–Mar) ─────────────────────
+    st.markdown("**📅 Period**")
+    _now = datetime.now()
+    _cur_fy = _now.year if _now.month >= 4 else _now.year - 1
+    _MONTHS = ["January", "February", "March", "April", "May", "June", "July",
+               "August", "September", "October", "November", "December"]
+
+    period_mode = st.radio(
+        "Select by",
+        ["Month", "Financial Year (Apr–Mar)"],
+        index=0,
+        help="Month = any single month. Financial Year = April to March.",
+    )
+
+    if period_mode == "Month":
+        _years = list(range(_now.year, 2019, -1))
+        sel_year = st.selectbox("Year", _years, index=0)
+        sel_month_name = st.selectbox("Month", _MONTHS, index=_now.month - 1)
+        period = build_period("month", year=sel_year, month=_MONTHS.index(sel_month_name) + 1)
+    else:
+        _fys = list(range(_cur_fy, 2018, -1))
+        sel_fy = st.selectbox(
+            "Financial Year", _fys, index=0,
+            format_func=lambda y: f"FY {y}-{str(y + 1)[-2:]}  (Apr {y} – Mar {y + 1})",
+        )
+        period = build_period("fy", fy_start=sel_fy)
+
+    st.caption(f"Selected: **{period['label']}**")
 
     st.markdown("---")
     st.markdown("**ℹ️ About**")
@@ -195,9 +224,9 @@ else:
             mode = "login" if process_type == "Login Business" else "issued"
 
             if mode == "login":
-                df_processed = process_login_business(df_raw.copy(), logs)
+                df_processed = process_login_business(df_raw.copy(), logs, period)
             else:
-                df_processed = process_issued_business(df_raw.copy(), logs)
+                df_processed = process_issued_business(df_raw.copy(), logs, period)
 
             progress.progress(55, text="Generating pivot reports…")
             time.sleep(0.1)
@@ -224,6 +253,7 @@ else:
             st.session_state["logs"]         = logs
             st.session_state["mode"]         = mode
             st.session_state["process_type"] = process_type
+            st.session_state["period"]       = period
 
         except Exception as e:
             progress.empty()
@@ -240,6 +270,8 @@ else:
         logs         = st.session_state["logs"]
         mode         = st.session_state["mode"]
         process_type = st.session_state["process_type"]
+        period       = st.session_state.get("period", period)
+        st.info(f"📅 Showing results for: **{period['label']}**")
 
         # ── Metrics row ───────────────────────────────────────────────────────
         m1, m2, m3, m4 = st.columns(4)
@@ -316,7 +348,7 @@ else:
         st.markdown("---")
 
         # ── Download ──────────────────────────────────────────────────────────
-        fname = f"{process_type.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        fname = f"{process_type.replace(' ', '_')}_{period['file_tag']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         st.download_button(
             label=f"⬇️  Download {process_type} Report (.xlsx)",
             data=excel_bytes,

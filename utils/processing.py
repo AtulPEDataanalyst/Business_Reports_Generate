@@ -3,6 +3,8 @@ processing.py — Business logic for Login Business and Issued Business processi
 Handles all 17 steps documented in the business process specification.
 """
 
+from __future__ import annotations
+
 import pandas as pd
 import numpy as np
 from datetime import datetime
@@ -247,7 +249,88 @@ def _is_blank_or_zero(series: pd.Series) -> pd.Series:
     return (series.isna()) | (series == 0)
 
 
-def process_login_business(df: pd.DataFrame, logs: list) -> pd.DataFrame:
+def build_period(period_type: str = "current", year: int = None, month: int = None, fy_start: int = None) -> dict:
+    """
+    Build a period dict used by Step 2 date filtering.
+      period_type = "current" → current month (default, old behaviour)
+      period_type = "month"   → single month  (year, month)
+      period_type = "fy"      → Financial Year Apr(fy_start) → Mar(fy_start+1)
+    Returns {"start": Timestamp, "end": Timestamp (exclusive), "label": str, "file_tag": str}
+    """
+    if period_type == "fy":
+        start = pd.Timestamp(year=fy_start, month=4, day=1)
+        end = pd.Timestamp(year=fy_start + 1, month=4, day=1)
+        label = f"FY {fy_start}-{str(fy_start + 1)[-2:]} (Apr {fy_start} – Mar {fy_start + 1})"
+        tag = f"FY{fy_start}-{str(fy_start + 1)[-2:]}"
+    else:
+        if period_type == "current" or year is None or month is None:
+            now = datetime.now()
+            year, month = now.year, now.month
+        start = pd.Timestamp(year=year, month=month, day=1)
+        end = start + pd.offsets.MonthBegin(1)
+        label = start.strftime("%B %Y")
+        tag = start.strftime("%b%Y")
+    return {"start": start, "end": end, "label": label, "file_tag": tag}
+
+
+def _filter_period(df: pd.DataFrame, date_col: str, period: dict | None) -> tuple[pd.DataFrame, str]:
+    """Filter df on date_col within period (defaults to current month). Returns (df, label)."""
+    if period is None:
+        period = build_period("current")
+    mask = (df[date_col] >= period["start"]) & (df[date_col] < period["end"])
+    return df[mask].copy(), period["label"]
+
+
+def _parse_dates(s: pd.Series) -> pd.Series:
+    """
+    Safe date reader. Real Excel dates are kept as-is. Text dates are read
+    day-first (Indian dd/mm/yyyy); ISO text (yyyy-mm-dd) is read normally;
+    Excel serial numbers are converted. Plain pd.to_datetime reads text
+    month-first, which silently blanks dates with day > 12.
+    """
+    if pd.api.types.is_datetime64_any_dtype(s):
+        return s
+    if pd.api.types.is_numeric_dtype(s):
+        return pd.to_datetime(s, unit="D", origin="1899-12-30", errors="coerce")
+
+    out = pd.Series(pd.NaT, index=s.index, dtype="datetime64[ns]")
+    is_dt = s.map(lambda v: isinstance(v, (datetime, pd.Timestamp)))
+    if is_dt.any():
+        out[is_dt] = pd.to_datetime(s[is_dt], errors="coerce")
+
+    txt = s[~is_dt & s.notna()].astype(str).str.strip()
+    txt = txt[txt != ""]
+    iso = txt.str.match(r"^\d{4}-\d{1,2}-\d{1,2}")
+
+    def _read(part: pd.Series, dayfirst: bool) -> pd.Series:
+        if part.empty:
+            return pd.Series(dtype="datetime64[ns]")
+        try:
+            return pd.to_datetime(part, errors="coerce", dayfirst=dayfirst, format="mixed")
+        except (TypeError, ValueError):   # older pandas without format="mixed"
+            return pd.to_datetime(part, errors="coerce", dayfirst=dayfirst)
+
+    if iso.any():
+        out[txt[iso].index] = _read(txt[iso], False)
+    if (~iso).any():
+        out[txt[~iso].index] = _read(txt[~iso], True)
+    return out
+
+
+def _date_diag(logs: list, raw: pd.Series, parsed: pd.Series, name: str):
+    """Diagnostic only (no data change): shows how the date column was read."""
+    raw_nonblank = raw.notna() & (raw.astype(str).str.strip() != "")
+    failed = raw_nonblank & parsed.isna()
+    sample = raw[raw_nonblank].astype(str).head(3).tolist()
+    dmin = parsed.min()
+    dmax = parsed.max()
+    logs.append(
+        f'<span class="log-info">  Date check [{name}]: dtype={raw.dtype} | sample={sample} | '
+        f'unreadable (became blank)={int(failed.sum())} | parsed range: {dmin} → {dmax}</span>'
+    )
+
+
+def process_login_business(df: pd.DataFrame, logs: list, period: dict | None = None) -> pd.DataFrame:
     """Run all 17 Login Business steps and return processed DataFrame."""
     df = df.copy()
     initial_rows = len(df)
@@ -255,8 +338,10 @@ def process_login_business(df: pd.DataFrame, logs: list) -> pd.DataFrame:
 
     # STEP 1 — Fill blank Policy Request Date from Business Date
     if check_column(df, "Policy Request Date") and check_column(df, "Business Date"):
-        df["Policy Request Date"] = pd.to_datetime(df["Policy Request Date"], errors="coerce")
-        df["Business Date"] = pd.to_datetime(df["Business Date"], errors="coerce")
+        _raw_prd = df["Policy Request Date"].copy()
+        df["Policy Request Date"] = _parse_dates(df["Policy Request Date"])
+        df["Business Date"] = _parse_dates(df["Business Date"])
+        _date_diag(logs, _raw_prd, df["Policy Request Date"], "Policy Request Date")
         mask = df["Policy Request Date"].isna()
         for idx in df[mask].index:
             new_val = df.at[idx, "Business Date"]
@@ -265,13 +350,10 @@ def process_login_business(df: pd.DataFrame, logs: list) -> pd.DataFrame:
         logs.append(f'<span class="log-info">  Step 1: Filled {mask.sum()} blank Policy Request Dates from Business Date.</span>')
 
     # STEP 2 — Filter current month data from Policy Request Date
-    now = datetime.now()
     if check_column(df, "Policy Request Date"):
         before = len(df)
-        mask = (df["Policy Request Date"].dt.month == now.month) & \
-               (df["Policy Request Date"].dt.year == now.year)
-        df = df[mask].copy()
-        logs.append(f'<span class="log-info">  Step 2 (Login): Filtered to current month ({now.strftime("%B %Y")}): {before} → {len(df)} rows.</span>')
+        df, plabel = _filter_period(df, "Policy Request Date", period)
+        logs.append(f'<span class="log-info">  Step 2 (Login): Filtered to period ({plabel}): {before} → {len(df)} rows.</span>')
 
     # STEP 3 — Exclude only "Direct Code". Blank BookedIn rows are KEPT.
     if check_column(df, "BookedIn"):
@@ -285,7 +367,7 @@ def process_login_business(df: pd.DataFrame, logs: list) -> pd.DataFrame:
     return df
 
 
-def process_issued_business(df: pd.DataFrame, logs: list) -> pd.DataFrame:
+def process_issued_business(df: pd.DataFrame, logs: list, period: dict | None = None) -> pd.DataFrame:
     """Run all Issued Business steps (same as Login with noted differences)."""
     df = df.copy()
     initial_rows = len(df)
@@ -293,8 +375,10 @@ def process_issued_business(df: pd.DataFrame, logs: list) -> pd.DataFrame:
 
     # DIFF 1 — Use Policy Issue Date instead of Policy Request Date
     if check_column(df, "Policy Issue Date") and check_column(df, "Business Date"):
-        df["Policy Issue Date"] = pd.to_datetime(df["Policy Issue Date"], errors="coerce")
-        df["Business Date"] = pd.to_datetime(df["Business Date"], errors="coerce")
+        _raw_pid = df["Policy Issue Date"].copy()
+        df["Policy Issue Date"] = _parse_dates(df["Policy Issue Date"])
+        df["Business Date"] = _parse_dates(df["Business Date"])
+        _date_diag(logs, _raw_pid, df["Policy Issue Date"], "Policy Issue Date")
         mask = df["Policy Issue Date"].isna()
         for idx in df[mask].index:
             new_val = df.at[idx, "Business Date"]
@@ -302,13 +386,10 @@ def process_issued_business(df: pd.DataFrame, logs: list) -> pd.DataFrame:
         df.loc[mask, "Policy Issue Date"] = df.loc[mask, "Business Date"]
         logs.append(f'<span class="log-info">  Step 1: Filled {mask.sum()} blank Policy Issue Dates from Business Date.</span>')
 
-    now = datetime.now()
     if check_column(df, "Policy Issue Date"):
         before = len(df)
-        mask = (df["Policy Issue Date"].dt.month == now.month) & \
-               (df["Policy Issue Date"].dt.year == now.year)
-        df = df[mask].copy()
-        logs.append(f'<span class="log-info">  Step 2 (Issued): Filtered to current month ({now.strftime("%B %Y")}): {before} → {len(df)} rows.</span>')
+        df, plabel = _filter_period(df, "Policy Issue Date", period)
+        logs.append(f'<span class="log-info">  Step 2 (Issued): Filtered to period ({plabel}): {before} → {len(df)} rows.</span>')
 
     # STEP 3 — Exclude only "Direct Code". Blank BookedIn rows are KEPT.
     if check_column(df, "BookedIn"):
@@ -389,7 +470,6 @@ def _shared_steps(df: pd.DataFrame, logs: list, mode: str) -> pd.DataFrame:
             new_net = round(df.at[idx, gross_col] / 1.18, 2)
             _log_change(logs, idx, net_col, old_net, new_net,
                         "Step 7: Net Premium = Gross Premium / 1.18")
-        df[net_col] = pd.to_numeric(df[net_col], errors="coerce").astype(float)
         df.loc[need_calc, net_col] = (df.loc[need_calc, gross_col] / 1.18).round(2)
         logs.append(f'<span class="log-info">  Step 7: Recalculated Net Premium for {need_calc.sum()} rows.</span>')
 
@@ -563,7 +643,6 @@ def _shared_steps(df: pd.DataFrame, logs: list, mode: str) -> pd.DataFrame:
                 _log_change(logs, idx, brok_col, 0, new_brok,
                             f"Step 15: 15% of TPOD ({tpod_val})")
 
-            df[brok_col] = pd.to_numeric(df[brok_col], errors="coerce").astype(float)
             df.loc[inst_calc_mask,    brok_col] = (_safe_numeric(df, "TPOD")[inst_calc_mask]    * 0.01).round(2)
             df.loc[special_calc_mask, brok_col] = (_safe_numeric(df, "TPOD")[special_calc_mask] * 0.45).round(2)
             df.loc[normal_calc_mask,  brok_col] = (_safe_numeric(df, "TPOD")[normal_calc_mask]  * 0.15).round(2)

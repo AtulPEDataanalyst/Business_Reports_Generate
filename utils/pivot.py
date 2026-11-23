@@ -79,6 +79,13 @@ def _build_pivot(df: pd.DataFrame, type_filter: list, title: str) -> pd.DataFram
     if not available_index:
         return pd.DataFrame()
 
+    # Normalise grouping columns to strings so blank/NaN values don't break
+    # sorting (mixing float NaN with str raises TypeError on sort).
+    for grp_col in ("Policy Status", "Business Source"):
+        if grp_col in subset.columns:
+            subset[grp_col] = subset[grp_col].fillna("(Blank)").astype(str).str.strip()
+            subset.loc[subset[grp_col] == "", grp_col] = "(Blank)"
+
     # Get unique transaction types present in this subset (in defined order)
     present_types = [t for t in type_filter if t in subset[col].unique()]
 
